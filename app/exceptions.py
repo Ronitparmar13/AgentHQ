@@ -30,3 +30,7 @@ class WorkspaceBoundaryError(PermissionError):
 
 class NotFoundError(LookupError):
     pass
+
+
+class ConflictError(RuntimeError):
+    pass
