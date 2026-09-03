@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+
+{% block title %}Projects - AgentHQ{% endblock %}
+
+{% block content %}
+    <div class="page-header">
+        <h1>Projects</h1>
+        <a href="/projects/new" class="btn btn-primary">New Project</a>
+    </div>
+
+    {% if projects %}
+        <div class="project-list">
+            {% for project in projects %}
+                <a href="/projects/{{ project.id }}" class="project-card">
+                    <div class="project-card-header">
+                        <h2>{{ project.title }}</h2>
+                        <span class="badge badge-{{ project.status }}">{{ project.status }}</span>
+                    </div>
+                    <p class="project-meta">
+                        Created {{ project.created_at | default(project.created_at, true) }}
+                    </p>
+                </a>
+            {% endfor %}
+        </div>
+    {% else %}
+        <div class="empty-state">
+            <p>No projects yet. Create your first project.</p>
+            <a href="/projects/new" class="btn btn-primary">Create Project</a>
+        </div>
+    {% endif %}
+{% endblock %}

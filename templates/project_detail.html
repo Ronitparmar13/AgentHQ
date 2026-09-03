@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+
+{% block title %}{{ project.title }} - AgentHQ{% endblock %}
+
+{% macro event_label(event) %}
+    {% set name = event.event_name %}
+    {% if name == "project.created" %}
+        Project created
+    {% elif name == "project.status_changed" %}
+        Project status changed to {{ event.payload.new_status }}
+    {% elif name == "manager.planning_started" %}
+        Manager started planning
+    {% elif name == "manager.planning_completed" %}
+        Manager completed planning ({{ event.payload.task_count }} tasks created)
+    {% elif name == "manager.planning_failed" %}
+        Planning failed: {{ event.payload.reason }}
+    {% elif name == "task.created" %}
+        Task created: {{ event.payload.title }}
+    {% elif name == "task.status_changed" %}
+        Task '{{ event.payload.task_id[:8] }}' status changed to {{ event.payload.new_status }}
+    {% else %}
+        {{ name }}
+    {% endif %}
+{% endmacro %}
+
+    {% macro safe_payload(payload) %}
+        {% set _items = payload | dictsort %}
+        {% for key, value in _items %}
+            {% set _key_lower = key | lower %}
+            {% set _is_secret = "key" in _key_lower or "token" in _key_lower or "secret" in _key_lower or "password" in _key_lower %}
+            {% if key is string and _is_secret %}
+            <span class="payload-key">{{ key }}:</span> <span class="payload-redacted">[REDACTED]</span>
+        {% elif value is mapping %}
+            <span class="payload-key">{{ key }}:</span>
+            <span class="payload-nested">{{ safe_payload(value) }}</span>
+        {% elif value is iterable and value is not string %}
+            <span class="payload-key">{{ key }}:</span> <span class="payload-value">{{ value | list }}</span>
+        {% else %}
+            <span class="payload-key">{{ key }}:</span> <span class="payload-value">{{ value }}</span>
+        {% endif %}
+        {% if not loop.last %}<br>{% endif %}
+    {% endfor %}
+{% endmacro %}
+
+{% block content %}
+    <div class="project-detail">
+        <div class="project-header">
+            <h1>{{ project.title }}</h1>
+            <span class="badge badge-{{ project.status }}">{{ project.status }}</span>
+        </div>
+        <p class="project-description">{{ project.description }}</p>
+        <p class="project-meta">Created {{ project.created_at }}</p>
+
+        <div class="section">
+            <div class="section-header">
+                <h2>Tasks</h2>
+                <button id="plan-btn" class="btn btn-primary" data-project-id="{{ project.id }}">
+                    Trigger Planning
+                </button>
+            </div>
+
+            {% if tasks %}
+                <div class="task-list">
+                    {% for task in tasks %}
+                        <div class="task-card" data-task-id="{{ task.id }}" data-status="{{ task.status }}">
+                            <div class="task-header">
+                                <h3>{{ task.title }}</h3>
+                                <span class="badge badge-{{ task.status }}">{{ task.status }}</span>
+                            </div>
+                            <div class="task-meta">
+                                <span class="badge badge-role">{{ task.assigned_role }}</span>
+                                <span class="badge badge-priority-{{ task.priority }}">{{ task.priority }}</span>
+                            </div>
+                            <form class="task-status-form" data-task-id="{{ task.id }}" data-project-id="{{ project.id }}">
+                                <select class="status-select" name="status">
+                                    {% set transitions = {
+                                        "backlog": ["ready"],
+                                        "ready": ["in_progress"],
+                                        "in_progress": ["review", "blocked"],
+                                        "review": ["done", "rework"],
+                                        "blocked": ["in_progress"],
+                                        "rework": ["in_progress", "done"],
+                                        "done": []
+                                    } %}
+                                    {% set options = transitions.get(task.status, []) %}
+                                    {% for option in options %}
+                                        <option value="{{ option }}">{{ option }}</option>
+                                    {% endfor %}
+                                </select>
+                                <button type="submit" class="btn btn-small btn-secondary">Update</button>
+                            </form>
+                        </div>
+                    {% endfor %}
+                </div>
+            {% else %}
+                <div class="empty-state">
+                    <p>No tasks yet. Trigger planning to create tasks.</p>
+                </div>
+            {% endif %}
+        </div>
+
+        <div class="section">
+            <h2>Activity</h2>
+            {% if events %}
+                <ul class="event-list">
+                    {% for event in events %}
+                        <li class="event-item">
+                            <span class="event-time">{{ event.created_at }}</span>
+                            <span class="event-label">{{ event_label(event) }}</span>
+                            {% if event.payload and event.payload | length > 0 %}
+                                <div class="event-payload">
+                                    {{ safe_payload(event.payload) }}
+                                </div>
+                            {% endif %}
+                        </li>
+                    {% endfor %}
+                </ul>
+            {% else %}
+                <div class="empty-state">
+                    <p>No activity yet.</p>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+{% endblock %}

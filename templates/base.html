@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}AgentHQ{% endblock %}</title>
+    <link rel="stylesheet" href="/static/css/main.css">
+</head>
+<body>
+    <nav class="navbar">
+        <a href="/" class="nav-brand">AgentHQ</a>
+        <div class="nav-links">
+            <a href="/">Dashboard</a>
+            <a href="/projects/new" class="nav-cta">New Project</a>
+        </div>
+    </nav>
+    <main class="container">
+        {% block content %}{% endblock %}
+    </main>
+    <script src="/static/js/main.js"></script>
+</body>
+</html>
