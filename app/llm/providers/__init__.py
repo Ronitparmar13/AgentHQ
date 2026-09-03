@@ -26,12 +26,19 @@ def build_provider_registry(
         "openai": OpenAIProvider(api_key=values.get("OPENAI_API_KEY", "")),
         "anthropic": AnthropicProvider(api_key=values.get("ANTHROPIC_API_KEY", "")),
         "gemini": GeminiProvider(api_key=values.get("GEMINI_API_KEY", "")),
+        "openrouter": OpenAICompatibleProvider(
+            base_url="https://openrouter.ai/api/v1/chat/completions",
+            api_key=values.get("OPENROUTER_API_KEY", ""),
+            provider_name="openrouter",
+        ),
     }
     for key, base_url in values.items():
         if not (key.startswith(_COMPAT_PREFIX) and key.endswith(_COMPAT_SUFFIX) and base_url):
             continue
         name = key[len(_COMPAT_PREFIX) : -len(_COMPAT_SUFFIX)].lower()
         if not name:
+            continue
+        if name in registry:
             continue
         registry[name] = OpenAICompatibleProvider(
             base_url=base_url,

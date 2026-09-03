@@ -216,5 +216,67 @@ def test_provider_registry_registers_builtins_and_opt_in_compatible_endpoints() 
             "OAICOMPAT_LOCAL_API_KEY": "local-key",
         }
     )
-    assert set(registry) == {"openai", "anthropic", "gemini", "local"}
+    assert set(registry) == {"openai", "anthropic", "gemini", "local", "openrouter"}
     assert isinstance(registry["local"], OpenAICompatibleProvider)
+    assert isinstance(registry["openrouter"], OpenAICompatibleProvider)
+
+
+def test_openrouter_provider_registered_with_defaults() -> None:
+    registry = build_provider_registry({})
+    assert "openrouter" in registry
+    provider = registry["openrouter"]
+    assert isinstance(provider, OpenAICompatibleProvider)
+    assert provider._base_url == "https://openrouter.ai/api/v1/chat/completions"
+    assert provider._provider_name == "openrouter"
+
+
+def test_openrouter_uses_openrouter_api_key() -> None:
+    registry = build_provider_registry({"OPENROUTER_API_KEY": "sk-or-secret"})
+    provider = registry["openrouter"]
+    assert provider._api_key == "sk-or-secret"
+
+
+def test_openrouter_allows_no_auth_when_api_key_is_missing() -> None:
+    provider = build_provider_registry({})["openrouter"]
+    with patch(
+        "app.llm.providers._helpers.httpx.post",
+        return_value=response(200, {"choices": [{"message": {"content": "no-auth"}}]}),
+    ) as post:
+        assert provider.complete("prompt", "model") == "no-auth"
+    assert "Authorization" not in post.call_args.kwargs["headers"]
+
+
+def test_openrouter_parses_successful_response_with_mocked_http() -> None:
+    provider = build_provider_registry({"OPENROUTER_API_KEY": "key"})["openrouter"]
+    with patch(
+        "app.llm.providers._helpers.httpx.post",
+        return_value=response(200, {"choices": [{"message": {"content": "openrouter result"}}]}),
+    ) as post:
+        assert provider.complete("prompt", "openai/gpt-5.6-luna") == "openrouter result"
+    assert post.call_count == 1
+    assert post.call_args.args[0] == "https://openrouter.ai/api/v1/chat/completions"
+    assert post.call_args.kwargs["json"]["model"] == "openai/gpt-5.6-luna"
+    assert post.call_args.kwargs["headers"]["Authorization"] == "Bearer key"
+
+
+def test_openrouter_normalizes_http_failures() -> None:
+    provider = build_provider_registry({"OPENROUTER_API_KEY": "key"})["openrouter"]
+    with patch(
+        "app.llm.providers._helpers.httpx.post", return_value=response(401, {})
+    ):
+        with pytest.raises(LLMProviderError) as exc_info:
+            provider.complete("prompt", "model")
+    assert exc_info.value.provider == "openrouter"
+    assert exc_info.value.category == "auth_failure"
+
+
+def test_openrouter_is_registered_before_opt_in_compatible_providers() -> None:
+    registry = build_provider_registry(
+        {
+            "OPENROUTER_API_KEY": "key",
+            "OAICOMPAT_OPENROUTER_BASE_URL": "http://localhost:9999/v1/chat/completions",
+            "OAICOMPAT_OPENROUTER_API_KEY": "other-key",
+        }
+    )
+    assert registry["openrouter"]._base_url == "https://openrouter.ai/api/v1/chat/completions"
+    assert registry["openrouter"]._api_key == "key"

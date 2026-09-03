@@ -1,5 +1,9 @@
 """Flask application factory for AgentHQ."""
 
+import os
+from pathlib import Path
+
+from dotenv import load_dotenv
 from flask import Flask, g, jsonify, render_template, request
 
 from app.config import AppConfig
@@ -9,8 +13,22 @@ from app.models.database import Base, get_engine, get_session_factory, get_db
 from app.routes.api import api_bp
 from app.routes.ui import ui_bp
 
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_DOTENV_PATH = _PROJECT_ROOT / ".env"
+
+
+def _load_project_dotenv(path: Path | None = None) -> bool:
+    """Load the project root ``.env`` into ``os.environ``.
+
+    Existing environment variables always take precedence over values
+    from the file (``override=False``).
+    """
+    return load_dotenv(dotenv_path=path or _DOTENV_PATH, override=False)
+
 
 def create_app(config: dict | None = None) -> Flask:
+    _load_project_dotenv()
+
     app_config = AppConfig(overrides=config)
 
     app = Flask(__name__, template_folder="../templates", static_folder="../static")
