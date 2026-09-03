@@ -9,6 +9,8 @@ from app.agents.manager import ManagerAgent
 from app.agents import AGENT_REGISTRY, build_registry
 from app.constants import AgentRole
 from app.exceptions import LLMProviderError
+from app.llm.base import BaseLLMProvider
+from app.llm.router import LLMRouter
 from app.models import Event, Project, Task
 from app.schemas import ModelConfig
 from app.services.event_service import EventService
@@ -90,3 +92,40 @@ def test_registry_includes_manager_and_non_executing_specialist_stubs() -> None:
         assert registry[role] is AGENT_REGISTRY[role]
     assert registry[AgentRole.designer].run(None, {}).status == "not_implemented"
     router.complete.assert_not_called()
+
+
+class _RecordingProvider(BaseLLMProvider):
+    def __init__(self, response: str) -> None:
+        self._response = response
+        self.calls: list[dict[str, object]] = []
+
+    def complete(self, prompt: str, model: str, **kwargs: object) -> str:
+        self.calls.append({"prompt": prompt, "model": model, "kwargs": kwargs})
+        return self._response
+
+
+def test_manager_uses_llm_router_and_validates_raw_response(
+    session: Session,
+) -> None:
+    project = make_project(session)
+    provider = _RecordingProvider(valid_plan_json())
+    router = LLMRouter({"MANAGER": ("fake", "configured-model")}, {"fake": provider})
+    manager = ManagerAgent(router, ModelConfig(provider="fake", model="configured-model"))
+
+    count = manager.plan(
+        project.id,
+        project.title,
+        project.description,
+        TaskService(EventService()),
+        EventService(),
+        session,
+    )
+
+    assert count == 2
+    assert len(provider.calls) == 1
+    assert provider.calls[0]["model"] == "configured-model"
+    assert provider.calls[0]["prompt"] == manager._build_prompt(project.title, project.description)
+    assert session.query(Task).count() == 2
+    assert session.scalar(
+        select(Event).where(Event.event_name == "manager.planning_completed")
+    ) is not None

@@ -80,6 +80,7 @@ def test_provider_planning_failure_records_safe_blocked_outcome(session: Session
     )
     assert project.status == ProjectStatus.blocked.value
     assert "network details" not in failure.payload
+    assert session.query(Task).filter_by(project_id=project.id).count() == 0
 
 
 def test_planning_rolls_back_partial_task_persistence(session: Session) -> None:
@@ -96,6 +97,30 @@ def test_planning_rolls_back_partial_task_persistence(session: Session) -> None:
 
     with pytest.raises(RuntimeError, match="planned task persistence failed"):
         service.trigger_planning(session, project.id, PartiallyFailingManager())
+    assert session.query(Task).filter_by(project_id=project.id).count() == 0
+    session.refresh(project)
+    assert project.status == ProjectStatus.blocked.value
+
+
+def test_dependency_failure_rolls_back_previously_created_tasks(session: Session) -> None:
+    service = ProjectService()
+    project = create_project(service, session)
+
+    class DependencyFailingManager:
+        def plan(self, **kwargs):  # type: ignore[no-untyped-def]
+            task_service = kwargs["task_service"]
+            session = kwargs["session"]
+            project_id = kwargs["project_id"]
+            task1 = task_service.create_task(
+                session, project_id, "T1", "D", AgentRole.backend, TaskPriority.low, defer_readiness=True
+            )
+            task2 = task_service.create_task(
+                session, project_id, "T2", "D", AgentRole.backend, TaskPriority.low, defer_readiness=True
+            )
+            task_service.create_task_dependency(session, project_id, task1.id, task1.id)
+
+    with pytest.raises(ValueError, match="itself"):
+        service.trigger_planning(session, project.id, DependencyFailingManager())
     assert session.query(Task).filter_by(project_id=project.id).count() == 0
     session.refresh(project)
     assert project.status == ProjectStatus.blocked.value
