@@ -191,6 +191,146 @@ def test_providers_parse_successful_responses(
     assert post.call_count == 1
 
 
+def test_gemini_provider_targets_generatecontent_endpoint_for_model_name() -> None:
+    provider = GeminiProvider(api_key="test-gemini-key")
+    with patch(
+        "app.llm.providers._helpers.httpx.post",
+        return_value=response(
+            200, {"candidates": [{"content": {"parts": [{"text": "ok"}]}}]}
+        ),
+    ) as post:
+        assert provider.complete("prompt", "gemini-3.6-flash") == "ok"
+    assert post.call_count == 1
+    assert post.call_args.args[0] == (
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent"
+    )
+    assert post.call_args.kwargs["headers"] == {
+        "Content-Type": "application/json",
+        "x-goog-api-key": "test-gemini-key",
+    }
+    assert post.call_args.kwargs["json"] == {"contents": [{"parts": [{"text": "prompt"}]}]}
+
+
+def test_gemini_provider_parses_auth_failure_from_error_response() -> None:
+    provider = GeminiProvider(api_key="test-gemini-key")
+    error_response = {
+        "error": {
+            "code": 400,
+            "message": "API key not valid. Please pass a valid API key.",
+            "status": "INVALID_ARGUMENT",
+            "details": [
+                {
+                    "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                    "reason": "API_KEY_INVALID",
+                    "domain": "googleapis.com",
+                }
+            ],
+        }
+    }
+    with patch("app.llm.providers._helpers.httpx.post", return_value=response(400, error_response)):
+        with pytest.raises(LLMProviderError) as exc_info:
+            provider.complete("prompt", "gemini-3.6-flash")
+    assert exc_info.value.provider == "gemini"
+    assert exc_info.value.category == "auth_failure"
+    assert "API key not valid" in str(exc_info.value)
+
+
+def test_gemini_provider_parses_rate_limit_from_error_response() -> None:
+    provider = GeminiProvider(api_key="test-gemini-key")
+    error_response = {
+        "error": {
+            "code": 429,
+            "message": "Rate limit exceeded",
+            "status": "RESOURCE_EXHAUSTED",
+            "details": [
+                {
+                    "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                    "reason": "RATE_LIMIT_EXCEEDED",
+                    "domain": "googleapis.com",
+                }
+            ],
+        }
+    }
+    with patch("app.llm.providers._helpers.httpx.post", return_value=response(429, error_response)):
+        with pytest.raises(LLMProviderError) as exc_info:
+            provider.complete("prompt", "gemini-3.6-flash")
+    assert exc_info.value.provider == "gemini"
+    assert exc_info.value.category == "rate_limit"
+    assert "Rate limit exceeded" in str(exc_info.value)
+
+
+def test_gemini_provider_falls_back_to_status_code_for_unknown_errors() -> None:
+    provider = GeminiProvider(api_key="test-gemini-key")
+    with patch("app.llm.providers._helpers.httpx.post", return_value=response(401, {})):
+        with pytest.raises(LLMProviderError) as exc_info:
+            provider.complete("prompt", "gemini-3.6-flash")
+    assert exc_info.value.provider == "gemini"
+    assert exc_info.value.category == "auth_failure"
+
+    with patch("app.llm.providers._helpers.httpx.post", return_value=response(429, {})):
+        with pytest.raises(LLMProviderError) as exc_info:
+            provider.complete("prompt", "gemini-3.6-flash")
+    assert exc_info.value.category == "rate_limit"
+
+    with patch("app.llm.providers._helpers.httpx.post", return_value=response(500, {})):
+        with pytest.raises(LLMProviderError) as exc_info:
+            provider.complete("prompt", "gemini-3.6-flash")
+    assert exc_info.value.category == "api_error"
+
+
+def test_gemini_provider_handles_network_errors() -> None:
+    provider = GeminiProvider(api_key="test-gemini-key")
+    with patch("app.llm.providers._helpers.httpx.post", side_effect=httpx.RequestError("connection failed")):
+        with pytest.raises(LLMProviderError) as exc_info:
+            provider.complete("prompt", "gemini-3.6-flash")
+    assert exc_info.value.provider == "gemini"
+    assert exc_info.value.category == "network_error"
+
+
+def test_gemini_provider_rejects_empty_response() -> None:
+    provider = GeminiProvider(api_key="test-gemini-key")
+    with patch(
+        "app.llm.providers._helpers.httpx.post",
+        return_value=response(200, {"candidates": []}),
+    ):
+        with pytest.raises(LLMProviderError) as exc_info:
+            provider.complete("prompt", "gemini-3.6-flash")
+    assert exc_info.value.provider == "gemini"
+    assert exc_info.value.category == "empty_response"
+
+
+def test_gemini_provider_rejects_malformed_json_response() -> None:
+    provider = GeminiProvider(api_key="test-gemini-key")
+    with patch("app.llm.providers._helpers.httpx.post", return_value=response(200, "not a dict")):
+        with pytest.raises(LLMProviderError) as exc_info:
+            provider.complete("prompt", "gemini-3.6-flash")
+    assert exc_info.value.provider == "gemini"
+    assert exc_info.value.category == "invalid_response"
+
+
+def test_gemini_provider_request_body_structure() -> None:
+    provider = GeminiProvider(api_key="test-gemini-key")
+    with patch(
+        "app.llm.providers._helpers.httpx.post",
+        return_value=response(200, {"candidates": [{"content": {"parts": [{"text": "ok"}]}}]}),
+    ) as post:
+        provider.complete("custom prompt", "gemini-3.6-flash")
+    assert post.call_args.kwargs["json"] == {"contents": [{"parts": [{"text": "custom prompt"}]}]}
+
+
+def test_gemini_provider_no_credentials_in_url_or_logs() -> None:
+    provider = GeminiProvider(api_key="secret-key-123")
+    with patch(
+        "app.llm.providers._helpers.httpx.post",
+        return_value=response(200, {"candidates": [{"content": {"parts": [{"text": "ok"}]}}]}),
+    ) as post:
+        provider.complete("prompt", "gemini-3.6-flash")
+    called_url = post.call_args.args[0]
+    assert "secret-key-123" not in called_url
+    assert "x-goog-api-key" in post.call_args.kwargs["headers"]
+    assert post.call_args.kwargs["headers"]["x-goog-api-key"] == "secret-key-123"
+
+
 def test_openai_compatible_provider_is_configurable_and_allows_no_auth() -> None:
     provider = OpenAICompatibleProvider(
         base_url="http://localhost:9999/v1/chat/completions",

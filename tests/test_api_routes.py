@@ -1,5 +1,6 @@
 """HTTP contract tests for API and UI routes."""
 
+import logging
 from unittest.mock import MagicMock
 
 import pytest
@@ -205,6 +206,36 @@ class TestApiRoutes:
     def test_trigger_planning_invalid_uuid_returns_400(self, client):
         resp = client.post("/api/projects/not-a-uuid/plan")
         assert resp.status_code == 400
+
+    def test_trigger_planning_unexpected_exception_returns_generic_500(
+        self, client, project_id, caplog
+    ):
+        from app.agents import AGENT_REGISTRY
+
+        class BoomRouter:
+            def complete(self, *args, **kwargs):
+                raise RuntimeError("provider boom")
+
+        original = AGENT_REGISTRY.get(AgentRole.manager)
+        AGENT_REGISTRY[AgentRole.manager] = ManagerAgent(
+            BoomRouter(), ModelConfig(provider="o", model="m")
+        )
+        try:
+            with caplog.at_level(logging.ERROR, logger="agenthq.routes"):
+                resp = client.post(f"/api/projects/{project_id}/plan")
+            assert resp.status_code == 500
+            assert resp.get_json() == {
+                "code": "internal_error",
+                "error": "An internal error occurred.",
+            }
+            assert any(
+                "trigger_planning failed" in rec.message
+                and rec.exc_info is not None
+                and isinstance(rec.exc_info[1], RuntimeError)
+                for rec in caplog.records
+            )
+        finally:
+            AGENT_REGISTRY[AgentRole.manager] = original
 
 
 class TestUiRoutes:

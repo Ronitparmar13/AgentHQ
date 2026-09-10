@@ -1,5 +1,7 @@
 """REST API blueprint."""
 
+import logging
+
 from sqlalchemy.orm import Session
 
 from flask import Blueprint, jsonify, request
@@ -243,8 +245,11 @@ def trigger_planning(project_id: str):
         return json_error(str(exc), "conflict", 409)
     except ValueError as exc:
         return json_error(str(exc), "validation_error", 422)
-    except Exception:
+    except Exception as exc:
         session.rollback()
+        logging.getLogger("agenthq.routes").error(
+            "trigger_planning failed", exc_info=True
+        )
         return json_error("An internal error occurred.", "internal_error", 500)
 
     return jsonify({"status": "planning_triggered"}), 200
