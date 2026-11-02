@@ -356,7 +356,7 @@ def test_provider_registry_registers_builtins_and_opt_in_compatible_endpoints() 
             "OAICOMPAT_LOCAL_API_KEY": "local-key",
         }
     )
-    assert set(registry) == {"openai", "anthropic", "gemini", "local", "openrouter"}
+    assert set(registry) == {"openai", "anthropic", "gemini", "local", "openrouter", "huggingface"}
     assert isinstance(registry["local"], OpenAICompatibleProvider)
     assert isinstance(registry["openrouter"], OpenAICompatibleProvider)
 
@@ -420,3 +420,66 @@ def test_openrouter_is_registered_before_opt_in_compatible_providers() -> None:
     )
     assert registry["openrouter"]._base_url == "https://openrouter.ai/api/v1/chat/completions"
     assert registry["openrouter"]._api_key == "key"
+
+
+def test_huggingface_provider_registered_with_defaults() -> None:
+    registry = build_provider_registry({})
+    assert "huggingface" in registry
+    provider = registry["huggingface"]
+    assert isinstance(provider, OpenAICompatibleProvider)
+    assert provider._base_url == "https://router.huggingface.co/v1/chat/completions"
+    assert provider._provider_name == "huggingface"
+
+
+def test_huggingface_uses_hf_token() -> None:
+    registry = build_provider_registry({"HF_TOKEN": "hf-secret-token"})
+    provider = registry["huggingface"]
+    assert provider._api_key == "hf-secret-token"
+
+
+def test_huggingface_sends_bearer_token_forwards_model_and_parses_response() -> None:
+    provider = build_provider_registry({"HF_TOKEN": "hf-secret-token"})["huggingface"]
+    model = "Qwen/Qwen3-4B-Instruct-2507:cheapest"
+    with patch(
+        "app.llm.providers._helpers.httpx.post",
+        return_value=response(200, {"choices": [{"message": {"content": "hf result"}}]}),
+    ) as post:
+        assert provider.complete("prompt", model) == "hf result"
+    assert post.call_count == 1
+    assert post.call_args.args[0] == "https://router.huggingface.co/v1/chat/completions"
+    assert post.call_args.kwargs["json"]["model"] == model
+    assert post.call_args.kwargs["headers"]["Authorization"] == "Bearer hf-secret-token"
+
+
+def test_huggingface_token_is_never_placed_in_request_url() -> None:
+    provider = build_provider_registry({"HF_TOKEN": "hf-secret-token"})["huggingface"]
+    with patch(
+        "app.llm.providers._helpers.httpx.post",
+        return_value=response(200, {"choices": [{"message": {"content": "ok"}}]}),
+    ) as post:
+        provider.complete("prompt", "Qwen/Qwen3-4B-Instruct-2507:cheapest")
+    called_url = post.call_args.args[0]
+    assert "hf-secret-token" not in called_url
+    assert called_url == "https://router.huggingface.co/v1/chat/completions"
+
+
+def test_huggingface_normalizes_auth_failure() -> None:
+    provider = build_provider_registry({"HF_TOKEN": "key"})["huggingface"]
+    with patch(
+        "app.llm.providers._helpers.httpx.post", return_value=response(401, {})
+    ):
+        with pytest.raises(LLMProviderError) as exc_info:
+            provider.complete("prompt", "model")
+    assert exc_info.value.provider == "huggingface"
+    assert exc_info.value.category == "auth_failure"
+
+
+def test_huggingface_normalizes_api_failure() -> None:
+    provider = build_provider_registry({"HF_TOKEN": "key"})["huggingface"]
+    with patch(
+        "app.llm.providers._helpers.httpx.post", return_value=response(500, {})
+    ):
+        with pytest.raises(LLMProviderError) as exc_info:
+            provider.complete("prompt", "model")
+    assert exc_info.value.provider == "huggingface"
+    assert exc_info.value.category == "api_error"

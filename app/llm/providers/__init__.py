@@ -31,6 +31,11 @@ def build_provider_registry(
             api_key=values.get("OPENROUTER_API_KEY", ""),
             provider_name="openrouter",
         ),
+        "huggingface": OpenAICompatibleProvider(
+            base_url="https://router.huggingface.co/v1/chat/completions",
+            api_key=values.get("HF_TOKEN", ""),
+            provider_name="huggingface",
+        ),
     }
     for key, base_url in values.items():
         if not (key.startswith(_COMPAT_PREFIX) and key.endswith(_COMPAT_SUFFIX) and base_url):
